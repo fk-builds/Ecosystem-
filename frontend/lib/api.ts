@@ -10,9 +10,42 @@ export interface PlanInfo {
   tagline: string;
   price_usd: number;
   price_yearly_usd: number;
+  price_pkr_month: number;
+  price_pkr_year: number;
   projects: number | null;
   agent_messages_per_day: number;
   features: string[];
+}
+
+export interface PaymentRecord {
+  id: string;
+  user_id: string;
+  plan_id: string;
+  interval: string;
+  provider: string;
+  order_id: string;
+  amount_pkr: number;
+  currency: string;
+  status: "awaiting_payment" | "pending_review" | "approved" | "rejected";
+  account: Record<string, string>;
+  txn_ref: string;
+  note: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CheckoutResult {
+  mode: "sandbox" | "manual" | "paddle" | "jazzcash" | "stripe";
+  plan: string;
+  interval: string;
+  order_id: string | null;
+  amount_pkr: number | null;
+  amount_usd: number | null;
+  url: string | null;
+  redirect_params: Record<string, string>;
+  instructions: string | null;
+  account: Record<string, string>;
+  demo: boolean;
 }
 
 export interface UserInfo {
@@ -39,7 +72,10 @@ export interface BillingStatus {
   usage_today: number;
   usage_limit: number;
   projects: number;
-  billing_mode: "demo" | "stripe";
+  billing_mode: string;
+  billing_providers: { active: string; paddle: boolean; jazzcash: boolean; manual: boolean; stripe: boolean; sandbox?: boolean };
+  is_admin: boolean;
+  payment_contacts: { jazzcash: string; easypaisa: string; bank_name: string; iban: string; account_title: string };
 }
 
 export class ApiError extends Error {
@@ -103,7 +139,15 @@ export const api = {
   code: (id: string, format: "html" | "react") => request<{ format: string; html: string; react: string; version: number }>(`/projects/${id}/code?format=${format}`),
 
   billingStatus: () => request<BillingStatus>("/billing/status"),
-  checkout: (plan: string, interval: "month" | "year") =>
-    request<{ url: string | null; demo: boolean; plan: string }>("/billing/checkout", { method: "POST", body: JSON.stringify({ plan, interval }) }),
+  checkout: (plan: string, interval: "month" | "year", provider = "") =>
+    request<CheckoutResult>("/billing/checkout", { method: "POST", body: JSON.stringify({ plan, interval, provider }) }),
   cancel: () => request<{ ok: boolean; plan: string }>("/billing/cancel", { method: "POST" }),
+
+  payments: () => request<{ payments: PaymentRecord[] }>("/billing/payments"),
+  confirmPayment: (id: string, txnRef: string, note = "") =>
+    request<{ ok: boolean; payment: PaymentRecord }>(`/billing/payments/${id}/confirm`, { method: "POST", body: JSON.stringify({ txn_ref: txnRef, note }) }),
+  approvePayment: (id: string, note = "") =>
+    request<{ ok: boolean; payment: PaymentRecord }>(`/billing/payments/${id}/approve`, { method: "POST", body: JSON.stringify({ note }) }),
+  rejectPayment: (id: string, note = "") =>
+    request<{ ok: boolean; payment: PaymentRecord }>(`/billing/payments/${id}/reject`, { method: "POST", body: JSON.stringify({ note }) }),
 };

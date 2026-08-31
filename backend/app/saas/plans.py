@@ -15,6 +15,8 @@ PLANS: dict[str, dict[str, Any]] = {
         "tagline": "Try the real product",
         "price_usd": 0,
         "price_yearly_usd": 0,
+        "price_pkr_month": 0,
+        "price_pkr_year": 0,
         "projects": 1,
         "agent_messages_per_day": 25,
         "features": [
@@ -31,6 +33,8 @@ PLANS: dict[str, dict[str, Any]] = {
         "tagline": "For makers & freelancers",
         "price_usd": 7,
         "price_yearly_usd": 67,
+        "price_pkr_month": 1499,
+        "price_pkr_year": 14499,
         "projects": 5,
         "agent_messages_per_day": 500,
         "features": [
@@ -48,6 +52,8 @@ PLANS: dict[str, dict[str, Any]] = {
         "tagline": "For teams & power users",
         "price_usd": 15,
         "price_yearly_usd": 144,
+        "price_pkr_month": 2999,
+        "price_pkr_year": 28999,
         "projects": None,  # unlimited
         "agent_messages_per_day": 2000,
         "features": [

@@ -50,7 +50,7 @@ def test_health_has_saas_info(client):
     body = r.json()
     assert body["ok"] is True
     assert body["version"] >= "1.1"
-    assert body["billing"] in {"sandbox", "stripe"}
+    assert body["billing"] in {"sandbox", "stripe", "manual", "jazzcash", "paddle"}
     assert body["embeddings"] in {"dense", "tfidf"}
 
 
@@ -115,7 +115,17 @@ def test_project_crud_and_ownership(client):
 
 
 def test_billing_demo_mode(client, user):
+    # With no gateway credentials configured, auto resolves to the manual
+    # (wallet/bank + TRX review) provider — the Pakistan bootstrap path.
     r = client.post("/api/billing/checkout", json={"plan": "starter"}, headers={"Authorization": f"Bearer {user['token']}"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["mode"] == "manual"
+    assert body["demo"] is False
+    assert body["order_id"] and body["amount_pkr"] == 1499
+
+    # Sandbox is only used when explicitly requested (e.g. CI/dev with no wallets).
+    r = client.post("/api/billing/checkout", json={"plan": "starter", "provider": "sandbox"}, headers={"Authorization": f"Bearer {user['token']}"})
     assert r.status_code == 200
     assert r.json()["demo"] is True
 
@@ -123,6 +133,7 @@ def test_billing_demo_mode(client, user):
     body = r.json()
     assert body["plan"] == "starter"
     assert body["usage_limit"] == 500
+    assert body["billing_mode"] == "manual"
 
 
 def test_ws_init_and_sync_authenticated(client, user, project):

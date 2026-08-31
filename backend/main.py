@@ -16,7 +16,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app import protocol
@@ -28,7 +28,18 @@ from app.canvas.parser import parse_canvas
 from app.config import get_settings
 from app.saas import auth as saas_auth
 from app.saas import billing, limits
+from app.saas.store import FileStore
 from app.saas.limits import LimitError
+from app.saas.payments import registry as payments
+from app.saas.payments.jazzcash_provider import (
+    jazzcash_callback_result,
+    encode_form,
+)
+from app.saas.payments.paddle_provider import (
+    event_payload,
+    plan_from_paddle_event,
+    verify_paddle_signature,
+)
 from app.saas.plans import DEFAULT_PLAN, PLANS
 from app.saas.store import FileStore, MemoryStore, StoreError
 from app.storage.vector import DenseEmbedder, build_memory
@@ -151,7 +162,7 @@ async def lifespan(app: FastAPI):
         "started | llm=%s | auth=%s | billing=%s | vector=%s",
         llm_mode,
         "supabase-jwt" if settings.supabase_jwt_secret else "session-tokens",
-        "stripe" if settings.stripe_secret_key else "sandbox",
+        _active_payment_provider(settings),
         "qdrant+dense" if settings.qdrant_url and embedder else "qdrant+offline" if settings.qdrant_url else "tfidf",
     )
     try:
@@ -230,6 +241,13 @@ async def require_project(project_id: str, user: dict[str, Any], store: Any) -> 
 
 # ── health & plans ───────────────────────────────────────────────────
 
+def _active_payment_provider(settings: Any) -> str:
+    try:
+        return payments.provider_status(settings)["active"]
+    except Exception:  # noqa: BLE001
+        return "sandbox"
+
+
 @app.get("/api/health")
 async def health() -> dict[str, Any]:
     return {
@@ -238,7 +256,7 @@ async def health() -> dict[str, Any]:
         "version": "1.1.0",
         "llm_mode": getattr(app.state, "llm_mode", "offline-local-agent"),
         "auth": "supabase-jwt" if settings.supabase_jwt_secret else "session-tokens",
-        "billing": "stripe" if settings.stripe_secret_key else "sandbox",
+        "billing": _active_payment_provider(settings),
         "embeddings": "dense" if getattr(app.state, "embedder_ready", False) else "tfidf",
         "connections": app.state.manager.connection_count(),
         "rooms": len(app.state.hub.rooms),
@@ -394,6 +412,7 @@ async def get_project_code(request: Request, project_id: str, format: str = Quer
 class CheckoutIn(BaseModel):
     plan: str
     interval: str = "month"
+    provider: str = ""  # auto|sandbox|manual|paddle|jazzcash|stripe
 
 
 @app.get("/api/billing/status")
@@ -402,6 +421,7 @@ async def billing_status(request: Request) -> dict[str, Any]:
     from app.saas.plans import agent_message_limit
 
     used = await app.state.store.usage_today(user["id"])
+    provider = payments.provider_status(settings)
     return {
         "plan": user.get("plan", "free"),
         "plan_status": user.get("plan_status", "free"),
@@ -409,7 +429,16 @@ async def billing_status(request: Request) -> dict[str, Any]:
         "usage_today": used,
         "usage_limit": agent_message_limit(user.get("plan", "free")),
         "projects": await app.state.store.project_count(user["id"]),
-        "billing_mode": "stripe" if settings.stripe_secret_key else "sandbox",
+        "billing_mode": provider["active"],
+        "billing_providers": provider,
+        "is_admin": settings.is_admin(user.get("email")),
+        "payment_contacts": {
+            "jazzcash": settings.jazzcash_account or "",
+            "easypaisa": settings.easypaisa_account or "",
+            "bank_name": settings.manual_bank_name or "",
+            "iban": settings.manual_iban or "",
+            "account_title": settings.manual_account_title or "",
+        },
     }
 
 
@@ -421,25 +450,148 @@ async def checkout(request: Request, body: CheckoutIn) -> dict[str, Any]:
     if body.plan == "free":
         raise HTTPException(status_code=400, detail="free plan cannot be checked out")
 
-    if settings.stripe_secret_key:
-        try:
-            result = await billing.create_checkout(
-                user_id=user["id"],
-                user_email=user["email"],
-                plan_id=body.plan,
-                secret_key=settings.stripe_secret_key,
-                base_url=settings.public_base_url,
-                interval=body.interval,
-            )
-            return result
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("checkout failed")
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
+    provider = payments.pick_provider(settings, body.provider)
+    try:
+        result = await provider.create_checkout(
+            user=user,
+            plan_id=body.plan,
+            interval=body.interval,
+            store=app.state.store,
+            base_url=settings.public_base_url,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("checkout failed (%s)", provider.name)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {
+        "mode": result.mode,
+        "plan": result.plan,
+        "interval": result.interval,
+        "order_id": result.order_id,
+        "amount_pkr": result.amount_pkr,
+        "amount_usd": result.amount_usd,
+        "url": result.url,
+        "redirect_params": result.redirect_params,
+        "instructions": result.instructions,
+        "account": result.account,
+        "demo": result.mode == "sandbox",
+    }
 
-    # No payment provider configured: sandbox activation (clearly labeled in the
-    # UI, real Stripe the moment STRIPE_SECRET_KEY is set).
-    await billing.demo_activate(user["id"], body.plan, app.state.store)
-    return {"url": None, "demo": True, "plan": body.plan}
+
+@app.get("/api/billing/payments")
+async def list_payments(request: Request) -> dict[str, Any]:
+    user = await require_user(request, app.state.store)
+    if settings.is_admin(user.get("email")):
+        payments_list = await app.state.store.list_payments()
+    else:
+        payments_list = await app.state.store.list_payments(user_id=user["id"])
+    return {"payments": payments_list}
+
+
+class PaymentConfirmIn(BaseModel):
+    txn_ref: str = Field(min_length=4, max_length=120)
+    note: str = ""
+
+
+async def _resolve_payment(store: FileStore, ref: str) -> dict[str, Any] | None:
+    """Resolve a payment by its id OR provider order id."""
+    payment = await store.get_payment(ref)
+    if payment:
+        return payment
+    for item in await store.list_payments():
+        if item["order_id"] == ref:
+            return item
+    return None
+
+
+@app.post("/api/billing/payments/{payment_id}/confirm")
+async def confirm_payment(request: Request, payment_id: str, body: PaymentConfirmIn) -> dict[str, Any]:
+    user = await require_user(request, app.state.store)
+    payment = await _resolve_payment(app.state.store, payment_id)
+    if not payment or payment["user_id"] != user["id"]:
+        raise HTTPException(status_code=404, detail="payment not found")
+    if payment["status"] not in {"awaiting_payment", "pending_review"}:
+        raise HTTPException(status_code=409, detail=f"payment already {payment['status']}")
+    updated = await app.state.store.update_payment(
+        payment["id"], status="pending_review", txn_ref=body.txn_ref.strip(), note=body.note.strip()
+    )
+    return {"ok": True, "payment": updated}
+
+
+class PaymentAdminIn(BaseModel):
+    note: str = ""
+
+
+@app.post("/api/billing/payments/{payment_id}/approve")
+async def approve_payment(request: Request, payment_id: str, body: PaymentAdminIn | None = None) -> dict[str, Any]:
+    user = await require_user(request, app.state.store)
+    if not settings.is_admin(user.get("email")):
+        raise HTTPException(status_code=403, detail="admin only")
+    payment = await _resolve_payment(app.state.store, payment_id)
+    if not payment:
+        raise HTTPException(status_code=404, detail="payment not found")
+    if payment["status"] not in {"pending_review", "awaiting_payment"}:
+        raise HTTPException(status_code=409, detail=f"payment already {payment['status']}")
+    await billing.demo_activate(payment["user_id"], payment["plan_id"], app.state.store)
+    updated = await app.state.store.update_payment(
+        payment["id"], status="approved", note=(body.note if body else payment.get("note", "")) or payment.get("note", "")
+    )
+    return {"ok": True, "payment": updated}
+
+
+@app.post("/api/billing/payments/{payment_id}/reject")
+async def reject_payment(request: Request, payment_id: str, body: PaymentAdminIn | None = None) -> dict[str, Any]:
+    user = await require_user(request, app.state.store)
+    if not settings.is_admin(user.get("email")):
+        raise HTTPException(status_code=403, detail="admin only")
+    payment = await _resolve_payment(app.state.store, payment_id)
+    if not payment:
+        raise HTTPException(status_code=404, detail="payment not found")
+    updated = await app.state.store.update_payment(
+        payment["id"], status="rejected", note=(body.note if body else "") or payment.get("note", "")
+    )
+    return {"ok": True, "payment": updated}
+
+
+# ── provider webhooks / callbacks ───────────────────────────────────
+
+@app.post("/api/payments/paddle/webhook")
+async def paddle_webhook(request: Request) -> JSONResponse:
+    """Paddle Billing webhook: verified signature -> activate/downgrade plan."""
+    if not settings.paddle_webhook_secret:
+        return JSONResponse({"ok": True, "skipped": "paddle webhook not configured"})
+    payload = await request.body()
+    signature = request.headers.get("paddle-signature", "")
+    if not verify_paddle_signature(payload, signature, settings.paddle_webhook_secret):
+        return JSONResponse({"error": "invalid signature"}, status_code=400)
+    event = json.loads(payload)
+    user_id, plan, interval = plan_from_paddle_event(event)
+    if user_id and plan and plan in PLANS:
+        if plan == "free":
+            await app.state.store.set_plan(user_id, "free", status="canceled")
+        else:
+            await billing.demo_activate(user_id, plan, app.state.store)
+        logger.info("paddle webhook %s -> user %s (%s)", event.get("type"), user_id, plan)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/payments/jazzcash/callback")
+async def jazzcash_callback(request: Request) -> Any:
+    """JazzCash posts form fields back here after the customer pays."""
+    form = await request.form()
+    fields = {k: str(v) for k, v in form.items()}
+    result = jazzcash_callback_result(fields, settings.jazzcash_integrity_salt)
+    if result["ok"] and result["order_id"]:
+        payment = await _resolve_payment(app.state.store, result["order_id"])
+        if payment and payment["status"] in {"awaiting_payment", "pending_review"}:
+            await billing.demo_activate(payment["user_id"], payment["plan_id"], app.state.store)
+            await app.state.store.update_payment(
+                payment["id"],
+                status="approved",
+                txn_ref=fields.get("pp_TxnRefNo", "") or payment.get("txn_ref", ""),
+                note="auto-approved via JazzCash callback",
+            )
+            return RedirectResponse(f"{settings.public_base_url}/billing?status=success&provider=jazzcash")
+    return RedirectResponse(f"{settings.public_base_url}/billing?status=failed&provider=jazzcash")
 
 
 @app.post("/api/billing/cancel")

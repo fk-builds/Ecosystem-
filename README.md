@@ -69,10 +69,14 @@ both fully real-time).
 | Starter | **$7/mo** ($67/yr) | 5 | 500 |
 | Pro | **$15/mo** ($144/yr) | unlimited | 2,000 |
 
-Comparable AI builder tools charge $20–30/mo. Billing runs in **demo mode**
-(instant activation) until `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` are set
-— then real Stripe Checkout + webhooks take over. Limits are enforced on the
-server, never the client.
+Comparable AI builder tools charge $20–30/mo. **Payments work from Pakistan**:
+Stripe is unavailable for PK businesses (SBP PSEFT licensing), so the billing
+layer uses a provider registry — `auto` picks **paddle** (international MoR,
+payouts to PK via Payoneer) → **jazzcash** (hosted PKR gateway) → **manual**
+(JazzCash/EasyPaisa/IBAN + TRX-id review, works today with zero approvals) →
+**sandbox**. Limits are enforced on the server, never the client. See
+`docs/PAKISTAN-PAYMENTS.md` for the exact signup lists (Paddle + Payoneer,
+JazzCash merchant, or just fill the manual wallet fields in `.env`).
 
 ## Things to try
 
@@ -99,7 +103,9 @@ tool timeouts, allowlists). Nothing secret is committed.
 | `POST /api/auth/signup\|login\|demo\|logout`, `GET /api/auth/me` | session auth |
 | `GET/POST /api/projects`, `GET/PATCH/DELETE /api/projects/{id}` | user projects |
 | `GET /api/projects/{id}/code?format=html\|react` | generated code payload |
-| `GET /api/billing/status`, `POST /api/billing/checkout\|cancel\|webhook` | plans & Stripe |
+| `GET /api/billing/status`, `POST /api/billing/checkout\|cancel` | plans & provider checkout |
+| `GET /api/billing/payments`, `POST /api/billing/payments/{id}/confirm\|approve\|reject` | manual payment review |
+| `POST /api/payments/paddle/webhook`, `POST /api/payments/jazzcash/callback` | provider webhooks |
 | `WS /ws?token=&project=` | real-time socket (per-project room) |
 | `GET /api/events?token=&project=` | SSE stream (direct/prod deployments) |
 | `GET /api/poll?token=&project=&after=<seq>` | proxy-safe long-poll (lossless) |

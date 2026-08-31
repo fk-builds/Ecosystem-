@@ -44,7 +44,10 @@ export default function PricingPage() {
                 ${plan.price_usd}
                 <span className="text-sm font-normal text-slate-500">/mo</span>
               </p>
-              {plan.price_yearly_usd > 0 && <p className="text-xs text-slate-500">${plan.price_yearly_usd}/year · save 20%</p>}
+              {plan.price_pkr_month > 0 && (
+                <p className="text-sm font-semibold text-emerald-300">Rs. {plan.price_pkr_month.toLocaleString()}/mo</p>
+              )}
+              {plan.price_yearly_usd > 0 && <p className="text-xs text-slate-500">${plan.price_yearly_usd}/yr · Rs. {plan.price_pkr_year.toLocaleString()}/yr</p>}
               <ul className="mt-5 flex-1 space-y-2 text-sm text-slate-300">
                 {plan.features.map((f) => (
                   <li key={f} className="flex gap-2"><span className="text-emerald-400">✓</span>{f}</li>

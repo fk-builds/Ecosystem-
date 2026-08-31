@@ -94,12 +94,14 @@ export default function LandingPage() {
           <div className="rounded-2xl border border-[#1c2740] bg-[#0e1526] p-5">
             <p className="font-semibold">Starter</p>
             <p className="text-3xl font-black">${starter?.price_usd ?? 7}<span className="text-sm font-normal text-slate-500">/mo</span></p>
+            <p className="text-sm font-semibold text-emerald-300">Rs. {(starter?.price_pkr_month ?? 1499).toLocaleString()}/mo</p>
             <p className="mt-2 text-sm text-slate-400">5 projects · 500 agent messages/day · code export · RAG</p>
             <Link href="/auth?mode=signup" className="mt-4 block rounded-lg bg-emerald-500 py-2 text-center text-sm font-semibold text-slate-950">Get Starter</Link>
           </div>
           <div className="rounded-2xl border border-emerald-400 bg-emerald-500/5 p-5">
             <p className="font-semibold text-emerald-300">Pro · most popular</p>
             <p className="text-3xl font-black">${pro?.price_usd ?? 15}<span className="text-sm font-normal text-slate-500">/mo</span></p>
+            <p className="text-sm font-semibold text-emerald-300">Rs. {(pro?.price_pkr_month ?? 2999).toLocaleString()}/mo</p>
             <p className="mt-2 text-sm text-slate-400">Unlimited projects · 2,000 messages/day · everything in Starter</p>
             <Link href="/auth?mode=signup" className="mt-4 block rounded-lg bg-emerald-500 py-2 text-center text-sm font-semibold text-slate-950">Get Pro</Link>
           </div>

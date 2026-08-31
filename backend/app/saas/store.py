@@ -40,6 +40,7 @@ class MemoryStore:
         self._sessions: dict[str, dict[str, Any]] = {}
         self._projects: dict[str, dict[str, Any]] = {}
         self._usage: dict[str, dict[str, int]] = {}
+        self._payments: dict[str, dict[str, Any]] = {}
         self._lock = asyncio.Lock()
 
     # ── users ──────────────────────────────────────────────────────
@@ -165,6 +166,66 @@ class MemoryStore:
             bucket[day] = bucket.get(day, 0) + 1
             return bucket[day]
 
+    # ── payments ───────────────────────────────────────────────────
+
+    async def create_payment(
+        self,
+        *,
+        user_id: str,
+        plan_id: str,
+        interval: str,
+        provider: str,
+        order_id: str,
+        amount_pkr: int,
+        currency: str,
+        status: str,
+        account: dict[str, Any] | None = None,
+        admin_note: str = "",
+    ) -> dict[str, Any]:
+        async with self._lock:
+            payment = {
+                "id": f"pay-{uuid4().hex[:10]}",
+                "user_id": user_id,
+                "plan_id": plan_id,
+                "interval": interval,
+                "provider": provider,
+                "order_id": order_id,
+                "amount_pkr": amount_pkr,
+                "currency": currency,
+                "status": status,
+                "account": account or {},
+                "txn_ref": "",
+                "note": admin_note,
+                "created_at": utcnow(),
+                "updated_at": utcnow(),
+            }
+            self._payments[payment["id"]] = payment
+            return dict(payment)
+
+    async def get_payment(self, payment_id: str) -> dict[str, Any] | None:
+        async with self._lock:
+            payment = self._payments.get(payment_id)
+            return dict(payment) if payment else None
+
+    async def list_payments(self, user_id: str | None = None) -> list[dict[str, Any]]:
+        async with self._lock:
+            items = [
+                dict(p)
+                for p in self._payments.values()
+                if user_id is None or p["user_id"] == user_id
+            ]
+            items.sort(key=lambda p: p["created_at"], reverse=True)
+            return items
+
+    async def update_payment(self, payment_id: str, **fields: Any) -> dict[str, Any] | None:
+        async with self._lock:
+            payment = self._payments.get(payment_id)
+            if not payment:
+                return None
+            payment.update(fields)
+            payment["updated_at"] = utcnow()
+            return dict(payment)
+
     # ── persistence (FileStore only) ───────────────────────────────
 
     async def close(self) -> None:  # noqa: D401 - noop for memory
@@ -187,6 +248,7 @@ class FileStore(MemoryStore):
                 self._sessions = data.get("sessions", {})
                 self._projects = data.get("projects", {})
                 self._usage = data.get("usage", {})
+                self._payments = data.get("payments", {})
         except Exception as exc:  # noqa: BLE001
             logger.warning("could not load %s: %s", self._path, exc)
 
@@ -201,6 +263,7 @@ class FileStore(MemoryStore):
                         "sessions": self._sessions,
                         "projects": self._projects,
                         "usage": self._usage,
+                        "payments": self._payments,
                     },
                     fh,
                     indent=1,
@@ -246,3 +309,30 @@ class FileStore(MemoryStore):
         count = await super().increment_usage(user_id)
         await self._persist()
         return count
+
+    async def create_payment(
+        self,
+        *,
+        user_id: str,
+        plan_id: str,
+        interval: str,
+        provider: str,
+        order_id: str,
+        amount_pkr: int,
+        currency: str,
+        status: str,
+        account: dict[str, Any] | None = None,
+        admin_note: str = "",
+    ) -> dict[str, Any]:
+        payment = await super().create_payment(
+            user_id=user_id, plan_id=plan_id, interval=interval, provider=provider,
+            order_id=order_id, amount_pkr=amount_pkr, currency=currency,
+            status=status, account=account, admin_note=admin_note,
+        )
+        await self._persist()
+        return payment
+
+    async def update_payment(self, payment_id: str, **fields: Any) -> dict[str, Any] | None:
+        payment = await super().update_payment(payment_id, **fields)
+        await self._persist()
+        return payment

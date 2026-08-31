@@ -53,8 +53,50 @@ class Settings(BaseSettings):
     public_base_url: str = "http://localhost:3000"
 
     # SaaS / billing
+    payment_provider: str = "auto"  # auto|sandbox|manual|paddle|jazzcash|stripe
+    admin_emails: str = ""  # comma separated; empty => only the demo account is admin
+
+    # Paddle (merchant-of-record, international cards; payouts to PK via Payoneer)
+    paddle_api_key: str = ""
+    paddle_webhook_secret: str = ""
+    paddle_price_starter_monthly: str = ""
+    paddle_price_starter_yearly: str = ""
+    paddle_price_pro_monthly: str = ""
+    paddle_price_pro_yearly: str = ""
+
+    # JazzCash merchant gateway (PKR, wallet + cards) — requires merchant account
+    jazzcash_merchant_id: str = ""
+    jazzcash_password: str = ""
+    jazzcash_integrity_salt: str = ""
+    jazzcash_base_url: str = ""  # default https://payments.jazzcash.com.pk
+
+    # Manual payment receiver details (works today, no gateway approval)
+    jazzcash_account: str = ""
+    easypaisa_account: str = ""
+    manual_bank_name: str = ""
+    manual_iban: str = ""
+    manual_account_title: str = ""
+
+    # Kept for the future (overseas entity) — not usable from a PK business today
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
+
+    @property
+    def jazzcash_all_configured(self) -> bool:
+        return bool(self.jazzcash_merchant_id and self.jazzcash_password and self.jazzcash_integrity_salt)
+
+    @property
+    def admin_list(self) -> list[str]:
+        return [e.strip().lower() for e in self.admin_emails.split(",") if e.strip()]
+
+    def is_admin(self, email: str | None) -> bool:
+        if not email:
+            return False
+        email = email.lower()
+        if email in self.admin_list:
+            return True
+        # Empty admin list => demo account is the controlling admin (dev/demo).
+        return not self.admin_list and email == self.demo_email.lower()
 
     @property
     def origins_list(self) -> list[str]:
