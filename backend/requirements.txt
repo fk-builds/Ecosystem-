@@ -1,0 +1,15 @@
+fastapi>=0.115
+uvicorn[standard]>=0.32
+pydantic>=2.9
+pydantic-settings>=2.6
+httpx>=0.27
+
+# Persistence (optional at runtime; needed for the Postgres/Supabase repository)
+asyncpg>=0.30
+
+# Vector memory (optional; QdrantMemory lazy-imports this)
+qdrant-client>=1.12
+
+# Testing
+pytest>=8.3
+pytest-asyncio>=0.24

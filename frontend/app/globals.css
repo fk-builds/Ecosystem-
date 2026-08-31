@@ -1,0 +1,59 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  @apply bg-[#0a0f1a] text-slate-100 antialiased;
+}
+
+/* React Flow dark theme overrides */
+.react-flow {
+  background: #0a0f1a;
+}
+.react-flow__attribution {
+  background: transparent;
+  color: #334155;
+}
+.react-flow__edge-path {
+  stroke: #1c2740;
+  stroke-width: 1.5;
+}
+.react-flow__handle {
+  width: 8px;
+  height: 8px;
+  background: #10b981;
+  border: 2px solid #0a0f1a;
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #1c2740;
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #2b3a5e;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.streaming-cursor {
+  animation: pulse-dot 0.9s infinite;
+}
